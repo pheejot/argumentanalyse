@@ -56,8 +56,7 @@ SCHEMA = {
                                 'Entscheidungsqualität', 'Problemlösungsfähigkeit',
                                 'Gemeinwohlorientierung', 'Regierungsfähigkeit', 'Umsetzbarkeit'
                             ]
-                        },
-                        'uniqueItems': True
+                        }
                     }
                 },
                 'required': ['side','speaker','quote_full','claim','reason','evidence','confidence','democracy_criteria'],
