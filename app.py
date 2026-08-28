@@ -32,7 +32,7 @@ WICHTIG:
 INPUT: Partizipation, politische Gleichheit, Responsivität, Öffentlichkeit, Transparenz, Wettbewerb.
 OUTPUT: Entscheidungsqualität, Problemlösungsfähigkeit, Gemeinwohlorientierung, Regierungsfähigkeit, Umsetzbarkeit.
 13. Mehrfachzuordnungen sind erlaubt. Erzwinge keine Zuordnung; wenn kein Kriterium passt, gib eine leere Liste zurück.
-14. Gib zu jedem Argument 1–3 keywords an: die wichtigsten Schlüsselwörter, die WÖRTLICH in claim bzw. quote_full vorkommen (vor allem tragende Substantive/Kernbegriffe). Sie dienen nur der Hervorhebung.
+14. Gib zu jedem Argument 2–4 keywords an: die entscheidenden Schlüsselwörter des Arguments UND seines Belegs (WÖRTLICH, vor allem tragende Substantive, Eigennamen und Zahlen). Sie dienen der Hervorhebung in Argument und Beleg.
 15. Liefere valides JSON gemäß dem vorgegebenen Schema.
 '''
 
@@ -368,12 +368,11 @@ def _bold_keywords(escaped_text, keywords):
 def _sich_cell(a):
     if not a:
         return '<td class="empty"></td><td class="empty"></td>'
-    arg = f'<div class="arg">{_bold_keywords(html.escape(_short_arg(a)), a.get("keywords"))}</div>'
+    kw = a.get('keywords')
+    arg = f'<div class="arg">{_bold_keywords(html.escape(_short_arg(a)), kw)}</div>'
     ev = re.sub(r'\s+', ' ', (a.get('evidence', '') or '')).strip()
     if ev:
-        if len(ev) > 48:
-            ev = ev[:48].rsplit(' ', 1)[0].rstrip(' ,;:–-') + '…'
-        arg += f'<div class="beleg">Beleg: {html.escape(ev)}</div>'
+        arg += f'<div class="beleg">Beleg: {_bold_keywords(html.escape(ev), kw)}</div>'
     cats = a.get('democracy_criteria', []) or []
     cat = ''.join(f'<span class="cat">{html.escape(c)}</span>' for c in cats)
     if not ev:
@@ -383,9 +382,8 @@ def _sich_cell(a):
     return f'<td>{arg}</td><td>{cat}</td>'
 
 
-def sicherung_body(question, arguments):
-    """Baut die einseitige Argument-Sicherung (Innen-HTML): nur PRO/KONTRA mit
-    Argument + Kategorie; in der Kategoriespalte Hinweis, wenn ein Beleg fehlt."""
+def _sich_table(arguments):
+    """Baut nur die Matrix-Tabelle (ohne CSS): PRO/KONTRA mit Argument + Kategorie."""
     pro = [a for a in arguments if a.get('side') == 'PRO']
     kontra = [a for a in arguments if a.get('side') == 'KONTRA']
     n = max(len(pro), len(kontra), 1)
@@ -400,7 +398,48 @@ def sicherung_body(question, arguments):
              f'<tr><th class="sub-pro">Argument</th><th class="sub-pro">Kategorie</th>'
              f'<th class="sub-kontra">Argument</th><th class="sub-kontra">Kategorie</th></tr>'
              f'{"".join(rows)}</table>')
-    return SICH_CSS + '<div class="sich">' + table + '</div>'
+    return '<div class="sich">' + table + '</div>'
+
+
+def sicherung_body(question, arguments):
+    """Bildschirm-/Beamer-Fassung (4:3, mitskalierende Schrift)."""
+    return SICH_CSS + _sich_table(arguments)
+
+
+# Feste Pixel-Fassung für den JPEG-Export (wkhtmltoimage kennt kein vmin/clamp).
+SICH_CSS_PX = '''<style>
+* { box-sizing: border-box; }
+body { margin:0; background:#fff; }
+.sich { font-family: Arial, Helvetica, sans-serif; color:#1f2430; width:1400px; }
+.sich table.mx { width:100%; border-collapse:collapse; table-layout:fixed; }
+.sich table.mx th, .sich table.mx td { border:1px solid #b9c4d0; padding:10px 12px; vertical-align:top; font-size:22px; }
+.sich .h-pro { background:#2f9e44; color:#fff; text-align:center; font-size:26px; }
+.sich .h-kontra { background:#e03131; color:#fff; text-align:center; font-size:26px; }
+.sich .sub-pro { background:#eaf7ee; text-align:center; font-size:20px; }
+.sich .sub-kontra { background:#fdeeee; text-align:center; font-size:20px; }
+.sich .arg { line-height:1.35; }
+.sich .beleg { font-size:18px; color:#5a6b7a; font-style:italic; margin-top:4px; }
+.sich .cat { display:inline-block; background:#eef2f7; border:1px solid #cdd8e4; border-radius:12px; padding:1px 10px; font-size:18px; margin:2px 4px 2px 0; }
+.sich .nobeleg { display:inline-block; background:#fff3bf; border:1px solid #f2c94c; border-radius:12px; padding:1px 10px; font-size:18px; margin-top:3px; color:#8a6d00; }
+.sich td.empty { background:#fbfcfd; }
+.sich .dash { color:#b0b0b0; }
+.sich b { font-weight:700; }
+</style>'''
+
+
+def sicherung_jpeg(arguments):
+    """Rendert die Matrix als JPEG (bytes) via wkhtmltoimage. None, wenn nicht verfügbar."""
+    try:
+        import imgkit
+    except Exception:
+        return None
+    doc = ('<!doctype html><html lang="de"><head><meta charset="utf-8">'
+           + SICH_CSS_PX + '</head><body>' + _sich_table(arguments) + '</body></html>')
+    options = {'format': 'jpeg', 'quality': '92', 'width': '1400', 'encoding': 'UTF-8', 'quiet': ''}
+    try:
+        return imgkit.from_string(doc, False, options=options)
+    except Exception:
+        return None
 
 
 def sicherung_doc(question, arguments):
@@ -423,6 +462,13 @@ def sicherung_ui(question, arguments, key):
                            sicherung_doc(question, arguments).encode('utf-8'),
                            'argument_sicherung_4zu3.html', 'text/html',
                            key=f'sich_dl_{key}', use_container_width=True)
+        jpg = sicherung_jpeg(arguments)
+        if jpg:
+            st.download_button('Matrix als JPEG-Bild herunterladen', jpg,
+                               'argument_matrix.jpg', 'image/jpeg',
+                               key=f'sich_jpg_{key}', use_container_width=True)
+        else:
+            st.caption('JPEG-Export benötigt auf Streamlit Cloud eine Datei „packages.txt" mit dem Eintrag „wkhtmltopdf".')
 
 
 st.title('🗣️ Diskussions-Analysator')
