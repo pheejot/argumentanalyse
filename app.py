@@ -228,6 +228,54 @@ def render_argument(arg, idx):
     </div>''', unsafe_allow_html=True)
 
 
+CHAT_CSS = '''<style>
+.da-wrap{max-width:1150px;margin:4px auto 2px}
+.da-head{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:8px;position:sticky;top:0;z-index:2}
+.da-h{font-weight:800;padding:6px 10px;border-radius:7px;text-align:center;color:#fff;font-size:1rem}
+.da-h.pro{background:#2f9e44}
+.da-h.kontra{background:#e03131}
+.da-row{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:7px 0;align-items:start}
+.da-cell{display:flex}
+.da-cell.left{justify-content:flex-start}
+.da-cell.right{justify-content:flex-end}
+.da-cell.mid{grid-column:1 / span 2;justify-content:center}
+.da-bubble{max-width:94%;padding:9px 13px;border-radius:14px;line-height:1.5;box-shadow:0 1px 3px rgba(0,0,0,.10)}
+.da-bubble.pro{background:#eef9f1;border:1px solid #2f9e44;border-bottom-left-radius:4px}
+.da-bubble.kontra{background:#fdecec;border:1px solid #e03131;border-bottom-right-radius:4px}
+.da-bubble.unklar{background:#f1f3f5;border:1px solid #adb5bd;max-width:70%;text-align:center}
+.da-meta{font-size:.76rem;color:#5a5a5a;font-weight:700;margin-bottom:3px}
+.da-q{font-size:1.02rem}
+.da-conf{font-size:.72rem;color:#8a8a8a;margin-top:5px}
+.da-wrap mark{padding:2px 3px;border-radius:3px}
+</style>'''
+
+
+def render_chat_columns(args):
+    """Chronologische Chat-Ansicht (nach Vorbild eines Zwei-Spalten-Chats):
+    PRO links, KONTRA rechts, UNKLAR mittig. Jedes Argument ist eine Zeile;
+    die Gegenspalte bleibt leer, sodass sichtbar wird, welches Argument zeitlich
+    zuerst gefallen ist. Reihenfolge = chronologisch (wie in args geliefert)."""
+    parts = [CHAT_CSS, '<div class="da-wrap">',
+             '<div class="da-head"><div class="da-h pro">✅ PRO</div><div class="da-h kontra">❌ KONTRA</div></div>']
+    for i, a in enumerate(args, 1):
+        side = a.get('side', 'UNKLAR')
+        cls = {'PRO': 'pro', 'KONTRA': 'kontra'}.get(side, 'unklar')
+        marked = mark_text(a.get('quote_full', ''), a.get('claim', ''), a.get('reason', ''), a.get('evidence', ''))
+        spk = f" · {html.escape(a['speaker'])}" if a.get('speaker') else ''
+        meta = f"[{time_label(a, i)}]{spk}"
+        bubble = (f'<div class="da-bubble {cls}"><div class="da-meta">{meta}</div>'
+                  f'<div class="da-q">„{marked}“</div>'
+                  f'<div class="da-conf">Sicherheit: {a.get("confidence", 0):.0%}</div></div>')
+        if side == 'PRO':
+            parts.append(f'<div class="da-row"><div class="da-cell left">{bubble}</div><div class="da-cell right"></div></div>')
+        elif side == 'KONTRA':
+            parts.append(f'<div class="da-row"><div class="da-cell left"></div><div class="da-cell right">{bubble}</div></div>')
+        else:
+            parts.append(f'<div class="da-row"><div class="da-cell mid">{bubble}</div></div>')
+    parts.append('</div>')
+    st.markdown(''.join(parts), unsafe_allow_html=True)
+
+
 def export_txt(question, transcript, args, include_internal=False):
     """Plain-text export that remains readable in any text editor."""
     lines = [
@@ -340,19 +388,10 @@ if mode == 'Live-Mikrofon':
         kontra_live = [a for a in live_args if a['side']=='KONTRA']
         unclear_live = [a for a in live_args if a['side']=='UNKLAR']
 
-        st.markdown('### Laufende Argumentübersicht')
+        st.markdown('### Laufender Verlauf (PRO ↔ KONTRA)')
         m1,m2,m3 = st.columns(3)
         m1.metric('PRO', len(pro_live)); m2.metric('KONTRA', len(kontra_live)); m3.metric('UNKLAR', len(unclear_live))
-        col_pro, col_kontra = st.columns(2)
-        with col_pro:
-            st.markdown('#### ✅ PRO')
-            for i,a in enumerate(pro_live,1): render_argument(a,i)
-        with col_kontra:
-            st.markdown('#### ❌ KONTRA')
-            for i,a in enumerate(kontra_live,1): render_argument(a,i)
-        if unclear_live:
-            with st.expander('Unklare Beiträge', expanded=False):
-                for i,a in enumerate(unclear_live,1): render_argument(a,i)
+        render_chat_columns(live_args)
 
         with st.expander('Interne Live-Analyse: Demokratie-Kriterien', expanded=False):
             crit_rows=[]
@@ -432,15 +471,11 @@ if 'arguments' in st.session_state:
     c1,c2,c3 = st.columns(3)
     c1.metric('Pro-Argumente', len(pro)); c2.metric('Kontra-Argumente', len(kontra)); c3.metric('Unklar', len(unclear))
 
-    tab1, tab2, tab3, tab4 = st.tabs(['PRO', 'KONTRA', 'UNKLAR', 'Transkript'])
-    with tab1:
-        for i,a in enumerate(pro,1): render_argument(a,i)
-    with tab2:
-        for i,a in enumerate(kontra,1): render_argument(a,i)
-    with tab3:
-        for i,a in enumerate(unclear,1): render_argument(a,i)
-    with tab4:
-        st.text_area('Vollständiges Transkript', transcript, height=400)
+    st.markdown('### Chronologischer Verlauf (PRO ↔ KONTRA)')
+    st.caption('Chat-Ansicht: jedes Argument in einer eigenen Zeile, die Gegenspalte bleibt leer – so ist erkennbar, welches Argument zeitlich zuerst gefallen ist.')
+    render_chat_columns(arguments)
+    with st.expander('Vollständiges Transkript anzeigen', expanded=False):
+        st.text_area('Vollständiges Transkript', transcript, height=400, label_visibility='collapsed')
 
     with st.expander('Interne Analyse: Demokratie-Kriterien anzeigen', expanded=False):
         criteria_rows = []
