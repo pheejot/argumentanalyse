@@ -32,7 +32,8 @@ WICHTIG:
 INPUT: Partizipation, politische Gleichheit, Responsivität, Öffentlichkeit, Transparenz, Wettbewerb.
 OUTPUT: Entscheidungsqualität, Problemlösungsfähigkeit, Gemeinwohlorientierung, Regierungsfähigkeit, Umsetzbarkeit.
 13. Mehrfachzuordnungen sind erlaubt. Erzwinge keine Zuordnung; wenn kein Kriterium passt, gib eine leere Liste zurück.
-14. Liefere valides JSON gemäß dem vorgegebenen Schema.
+14. Gib zu jedem Argument 1–3 keywords an: die wichtigsten Schlüsselwörter, die WÖRTLICH in claim bzw. quote_full vorkommen (vor allem tragende Substantive/Kernbegriffe). Sie dienen nur der Hervorhebung.
+15. Liefere valides JSON gemäß dem vorgegebenen Schema.
 '''
 
 SCHEMA = {
@@ -61,9 +62,10 @@ SCHEMA = {
                                 'Gemeinwohlorientierung', 'Regierungsfähigkeit', 'Umsetzbarkeit'
                             ]
                         }
-                    }
+                    },
+                    'keywords': {'type': 'array', 'items': {'type': 'string'}}
                 },
-                'required': ['side','speaker','quote_full','claim','reason','evidence','confidence','democracy_criteria'],
+                'required': ['side','speaker','quote_full','claim','reason','evidence','confidence','democracy_criteria','keywords'],
                 'additionalProperties': False
             }
         }
@@ -322,6 +324,107 @@ def export_html(question, transcript, args):
 {''.join(cards)}<hr><h2>Vollständiges Transkript</h2><pre style="white-space:pre-wrap">{html.escape(transcript)}</pre></html>'''
 
 
+# ---------------------------------------------------------------------------
+# ÜBERSICHT / ARGUMENT-SICHERUNG (Layout nach der B03-Sicherungsmatrix)
+# Einseitige Gegenüberstellung als Grundlage für die schriftliche Stellungnahme.
+# ---------------------------------------------------------------------------
+SICH_CSS = '''<style>
+@page { size: 254mm 190.5mm; margin: 8mm; }   /* 4:3-Seite (Beamer) */
+.sich * { box-sizing: border-box; }
+.sich { font-family: Arial, Helvetica, sans-serif; color:#1f2430; width:100%; margin:0 auto; }
+.sich table.mx { width:100%; border-collapse:collapse; table-layout:fixed; }
+.sich table.mx th, .sich table.mx td { border:1px solid #b9c4d0; padding:0.7vmin 0.9vmin; vertical-align:top; font-size:clamp(13px,1.9vmin,32px); }
+.sich .h-pro { background:#2f9e44; color:#fff; text-align:center; font-size:clamp(15px,2.3vmin,40px); }
+.sich .h-kontra { background:#e03131; color:#fff; text-align:center; font-size:clamp(15px,2.3vmin,40px); }
+.sich .sub-pro { background:#eaf7ee; text-align:center; }
+.sich .sub-kontra { background:#fdeeee; text-align:center; }
+.sich .arg { line-height:1.35; }
+.sich .beleg { font-size:clamp(10px,1.4vmin,22px); color:#5a6b7a; font-style:italic; margin-top:2px; }
+.sich .cat { display:inline-block; background:#eef2f7; border:1px solid #cdd8e4; border-radius:10px; padding:0 0.7vmin; font-size:clamp(11px,1.5vmin,24px); margin:1px 3px 2px 0; }
+.sich .nobeleg { display:inline-block; background:#fff3bf; border:1px solid #f2c94c; border-radius:10px; padding:0 0.7vmin; font-size:clamp(11px,1.5vmin,24px); margin-top:2px; color:#8a6d00; white-space:nowrap; }
+.sich td.empty { background:#fbfcfd; }
+.sich .dash { color:#b0b0b0; }
+</style>'''
+
+
+def _short_arg(a, limit=120):
+    """Komprimierte, aber verständliche Kurzfassung: Kernaussage (Behauptung),
+    sonst der Argument-Wortlaut; bei Bedarf am Wortende gekürzt."""
+    t = (a.get('claim', '') or '').strip() or (a.get('quote_full', '') or '').strip()
+    t = re.sub(r'\s+', ' ', t)
+    if len(t) > limit:
+        t = t[:limit].rsplit(' ', 1)[0].rstrip(' ,;:–-') + '…'
+    return t or '—'
+
+
+def _bold_keywords(escaped_text, keywords):
+    """Hebt die wichtigen Schlüsselwörter im (bereits HTML-escapten) Text fett hervor."""
+    for kw in sorted([k.strip() for k in (keywords or []) if k and k.strip()], key=len, reverse=True):
+        ekw = re.escape(html.escape(kw))
+        escaped_text = re.sub(rf'(?<!<b>)({ekw})', r'<b>\1</b>', escaped_text, count=1, flags=re.IGNORECASE)
+    return escaped_text
+
+
+def _sich_cell(a):
+    if not a:
+        return '<td class="empty"></td><td class="empty"></td>'
+    arg = f'<div class="arg">{_bold_keywords(html.escape(_short_arg(a)), a.get("keywords"))}</div>'
+    ev = re.sub(r'\s+', ' ', (a.get('evidence', '') or '')).strip()
+    if ev:
+        if len(ev) > 48:
+            ev = ev[:48].rsplit(' ', 1)[0].rstrip(' ,;:–-') + '…'
+        arg += f'<div class="beleg">Beleg: {html.escape(ev)}</div>'
+    cats = a.get('democracy_criteria', []) or []
+    cat = ''.join(f'<span class="cat">{html.escape(c)}</span>' for c in cats)
+    if not ev:
+        cat += '<span class="nobeleg">⚠ ohne Beleg</span>'
+    if not cat:
+        cat = '<span class="dash">—</span>'
+    return f'<td>{arg}</td><td>{cat}</td>'
+
+
+def sicherung_body(question, arguments):
+    """Baut die einseitige Argument-Sicherung (Innen-HTML): nur PRO/KONTRA mit
+    Argument + Kategorie; in der Kategoriespalte Hinweis, wenn ein Beleg fehlt."""
+    pro = [a for a in arguments if a.get('side') == 'PRO']
+    kontra = [a for a in arguments if a.get('side') == 'KONTRA']
+    n = max(len(pro), len(kontra), 1)
+    rows = []
+    for i in range(n):
+        p = pro[i] if i < len(pro) else None
+        k = kontra[i] if i < len(kontra) else None
+        rows.append('<tr>' + _sich_cell(p) + _sich_cell(k) + '</tr>')
+    W = '<col style="width:33%"><col style="width:17%"><col style="width:33%"><col style="width:17%">'
+    table = (f'<table class="mx"><colgroup>{W}</colgroup>'
+             f'<tr><th class="h-pro" colspan="2">PRO (dafür)</th><th class="h-kontra" colspan="2">KONTRA (dagegen)</th></tr>'
+             f'<tr><th class="sub-pro">Argument</th><th class="sub-pro">Kategorie</th>'
+             f'<th class="sub-kontra">Argument</th><th class="sub-kontra">Kategorie</th></tr>'
+             f'{"".join(rows)}</table>')
+    return SICH_CSS + '<div class="sich">' + table + '</div>'
+
+
+def sicherung_doc(question, arguments):
+    """Vollständiges, druckbares HTML-Dokument (A4 quer) für den Download."""
+    return ('<!doctype html><html lang="de"><head><meta charset="utf-8">'
+            '<title>Argument-Sicherung</title></head><body>'
+            + sicherung_body(question, arguments) + '</body></html>')
+
+
+def sicherung_ui(question, arguments, key):
+    """Button + Vorschau + Download für die einseitige Argument-Sicherung."""
+    st.markdown('#### 📄 Übersicht für die Stellungnahme')
+    st.caption('Erzeugt eine 4:3-Beamer-Übersicht: Pro- und Kontra-Argumente in gekürzter, verständlicher Form '
+               'mit Kategorie (Hinweis „ohne Beleg", wenn ein Argument keinen Beleg enthält).')
+    if st.button('Übersicht / Argument-Sicherung erstellen', key=f'sich_btn_{key}', use_container_width=True):
+        st.session_state[f'show_sich_{key}'] = True
+    if st.session_state.get(f'show_sich_{key}'):
+        st.markdown(sicherung_body(question, arguments), unsafe_allow_html=True)
+        st.download_button('Als 4:3-Seite für den Beamer herunterladen (im Browser mit F11 auf Vollbild)',
+                           sicherung_doc(question, arguments).encode('utf-8'),
+                           'argument_sicherung_4zu3.html', 'text/html',
+                           key=f'sich_dl_{key}', use_container_width=True)
+
+
 st.title('🗣️ Diskussions-Analysator')
 st.caption('Audio → Transkript → Pro/Contra → Behauptung / Begründung / Beleg im Wortlaut, chronologisch mit Zeitmarker · Kriterienzuordnung intern')
 
@@ -410,6 +513,9 @@ if mode == 'Live-Mikrofon':
         e1.download_button('Live-Ergebnis als TXT', txt_live, 'diskussionsanalyse_live.txt', 'text/plain', use_container_width=True)
         e2.download_button('Live-Ergebnis als HTML', report_live, 'diskussionsanalyse_live.html', 'text/html', use_container_width=True)
         e3.download_button('Live-Daten als CSV', csv_live, 'argumente_live.csv', 'text/csv', use_container_width=True)
+
+        st.divider()
+        sicherung_ui(live_q, live_args, 'live')
 
 elif mode == 'Audio hochladen':
     uploaded = st.file_uploader('Audio-Datei', type=['mp3','wav','m4a','mp4','mpeg','webm'])
@@ -505,6 +611,9 @@ if 'arguments' in st.session_state:
     d1.download_button('TXT herunterladen', txt, 'diskussionsanalyse.txt', 'text/plain', use_container_width=True)
     d2.download_button('Farbige HTML-Auswertung', report, 'diskussionsanalyse.html', 'text/html', use_container_width=True)
     d3.download_button('CSV-Daten herunterladen', csv, 'argumente.csv', 'text/csv', use_container_width=True)
+
+    st.divider()
+    sicherung_ui(q, arguments, 'main')
 
 st.divider()
 st.caption('Hinweis: Automatische Transkription und Argumenterkennung können Fehler enthalten. Für Bewertung oder Benotung sollte das Ergebnis gegen die Aufnahme geprüft werden.')
