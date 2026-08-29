@@ -1,5 +1,6 @@
-import os, json, html, re, tempfile
+import os, json, html, re, base64, tempfile
 from pathlib import Path
+import requests
 import pandas as pd
 import streamlit as st
 from openai import OpenAI
@@ -449,6 +450,94 @@ def sicherung_doc(question, arguments):
             + sicherung_body(question, arguments) + '</body></html>')
 
 
+# ---------------------------------------------------------------------------
+# ERGEBNIS-LINK: Matrix ins (private) GitHub-Repo veröffentlichen + Ansichts-Modus
+# als QR-Ziel. Der GitHub-Token bleibt serverseitig (Streamlit-Secrets).
+# ---------------------------------------------------------------------------
+def _gh_cfg():
+    """GitHub-Zugang aus den Streamlit-Secrets, oder None wenn nicht konfiguriert."""
+    try:
+        token = st.secrets.get('GITHUB_TOKEN', '')
+        repo = st.secrets.get('GITHUB_REPO', '')
+        branch = st.secrets.get('GITHUB_BRANCH', 'main') or 'main'
+    except Exception:
+        return None
+    if not token or not repo:
+        return None
+    return {'token': token, 'repo': repo, 'branch': branch}
+
+
+def _gh_headers(cfg):
+    return {'Authorization': f'Bearer {cfg["token"]}',
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'}
+
+
+def _result_path(token):
+    safe = re.sub(r'[^A-Za-z0-9_-]', '', str(token))
+    return f'ergebnisse/{safe}.jpg'
+
+
+def github_get_sha(cfg, path):
+    url = f'https://api.github.com/repos/{cfg["repo"]}/contents/{path}'
+    r = requests.get(url, headers=_gh_headers(cfg), params={'ref': cfg['branch']}, timeout=20)
+    return r.json().get('sha') if r.status_code == 200 else None
+
+
+def github_put_image(cfg, path, data_bytes, message):
+    url = f'https://api.github.com/repos/{cfg["repo"]}/contents/{path}'
+    body = {'message': message,
+            'content': base64.b64encode(data_bytes).decode('ascii'),
+            'branch': cfg['branch']}
+    sha = github_get_sha(cfg, path)
+    if sha:
+        body['sha'] = sha
+    r = requests.put(url, headers=_gh_headers(cfg), json=body, timeout=30)
+    return (r.status_code in (200, 201)), r
+
+
+@st.cache_data(ttl=8, show_spinner=False)
+def fetch_result_image(repo, branch, path):
+    """Lädt das veröffentlichte Ergebnis-Bild serverseitig (kurz gecacht, damit
+    viele gleichzeitige Zuschauer die GitHub-API nicht überlasten)."""
+    cfg = _gh_cfg()
+    if not cfg:
+        return None
+    url = f'https://api.github.com/repos/{repo}/contents/{path}'
+    r = requests.get(url, headers=_gh_headers(cfg), params={'ref': branch}, timeout=20)
+    if r.status_code == 200:
+        try:
+            return base64.b64decode(r.json().get('content', ''))
+        except Exception:
+            return None
+    return None
+
+
+def render_view_mode(token):
+    """QR-Zielseite: zeigt NUR die veröffentlichte Matrix, blendet die Bedien-UI
+    aus und aktualisiert sich automatisch (~10 s)."""
+    st.markdown('''<style>
+        [data-testid="stSidebar"], [data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"] { display:none !important; }
+        .block-container { padding:0.6rem 1rem !important; max-width:100% !important; }
+    </style>''', unsafe_allow_html=True)
+    try:
+        from streamlit_autorefresh import st_autorefresh
+        st_autorefresh(interval=10000, key='ergebnis_refresh')
+    except Exception:
+        import streamlit.components.v1 as components
+        components.html('<script>setTimeout(function(){window.parent.location.reload();},10000);</script>', height=0)
+    cfg = _gh_cfg()
+    if not cfg:
+        st.info('Ansichts-Modus ist nicht konfiguriert (GitHub-Secrets fehlen).')
+        return
+    img = fetch_result_image(cfg['repo'], cfg['branch'], _result_path(token))
+    if img:
+        st.image(img, use_container_width=True)
+    else:
+        st.markdown("<div style='text-align:center;margin-top:16vh;font-size:1.6rem;color:#556'>"
+                    "Ergebnis erscheint gleich …</div>", unsafe_allow_html=True)
+
+
 def sicherung_ui(question, arguments, key):
     """Button + Vorschau + Download für die einseitige Argument-Sicherung."""
     st.markdown('#### 📄 Übersicht für die Stellungnahme')
@@ -469,6 +558,45 @@ def sicherung_ui(question, arguments, key):
                                key=f'sich_jpg_{key}', use_container_width=True)
         else:
             st.caption('JPEG-Export benötigt auf Streamlit Cloud eine Datei „packages.txt" mit dem Eintrag „wkhtmltopdf".')
+
+        # --- Veröffentlichen unter festem Link (QR-Ziel) ---
+        st.markdown('##### 🔗 Ergebnis veröffentlichen (fester Link / QR)')
+        cfg = _gh_cfg()
+        default_code = ''
+        try:
+            default_code = st.secrets.get('KLASSENCODE', '')
+        except Exception:
+            pass
+        code = st.text_input('Klassencode', value=default_code, key=f'sich_code_{key}',
+                             help='Bestimmt den festen Link …/?ergebnis=CODE für QR-Code und itslearning.')
+        if not cfg:
+            st.caption('Veröffentlichen inaktiv: GITHUB_TOKEN und GITHUB_REPO in den Streamlit-Secrets hinterlegen.')
+        elif st.button('Ergebnis veröffentlichen', key=f'sich_pub_{key}', type='primary', use_container_width=True):
+            c = (code or '').strip()
+            if not c:
+                st.warning('Bitte einen Klassencode angeben.')
+            else:
+                jpg_pub = sicherung_jpeg(arguments)
+                if not jpg_pub:
+                    st.error('JPEG konnte nicht erzeugt werden (wkhtmltopdf fehlt?).')
+                else:
+                    try:
+                        ok, resp = github_put_image(cfg, _result_path(c), jpg_pub, f'Ergebnis {c} aktualisiert')
+                    except Exception as e:
+                        ok, resp = False, None
+                        st.error(f'Fehler beim Veröffentlichen: {e}')
+                    if ok:
+                        fetch_result_image.clear()
+                        st.success(f'veröffentlicht ✔  ·  Ansicht: …/?ergebnis={c}')
+                    elif resp is not None:
+                        st.error(f'Fehler beim Veröffentlichen: HTTP {resp.status_code} – {resp.text[:180]}')
+
+
+# --- QR-Ziel: bei ?ergebnis=CODE nur das veröffentlichte Ergebnis zeigen ---
+_ergebnis_code = st.query_params.get('ergebnis')
+if _ergebnis_code:
+    render_view_mode(_ergebnis_code)
+    st.stop()
 
 
 st.title('🗣️ Diskussions-Analysator')
