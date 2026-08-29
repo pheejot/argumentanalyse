@@ -5,7 +5,16 @@ import pandas as pd
 import streamlit as st
 from openai import OpenAI
 
-st.set_page_config(page_title='Diskussions-Analysator', page_icon='🗣️', layout='wide')
+_ICON = '🗣️'
+try:
+    from PIL import Image as _PILImage
+    _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'logo.png')
+    if os.path.exists(_logo_path):
+        _ICON = _PILImage.open(_logo_path)
+except Exception:
+    _ICON = '🗣️'
+
+st.set_page_config(page_title='Diskussions-Analysator', page_icon=_ICON, layout='wide')
 
 COLORS = {
     'Behauptung': '#ffe066',   # gelb
