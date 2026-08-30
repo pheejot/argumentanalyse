@@ -662,18 +662,20 @@ def fetch_result_image(repo, branch, path):
 
 
 def render_view_mode(token):
-    """QR-Zielseite: zeigt NUR die veröffentlichte Matrix, blendet die Bedien-UI
-    aus und aktualisiert sich automatisch (~10 s)."""
+    """QR-Zielseite: zeigt NUR die veröffentlichte Matrix und blendet die
+    Bedien-UI aus. Standard: statisches Bild (kein Neuladen). Nur wenn die URL
+    zusätzlich ?live=1 enthält, aktualisiert sich die Seite automatisch (~10 s)."""
     st.markdown('''<style>
         [data-testid="stSidebar"], [data-testid="stHeader"], #MainMenu, footer, [data-testid="stToolbar"] { display:none !important; }
         .block-container { padding:0.6rem 1rem !important; max-width:100% !important; }
     </style>''', unsafe_allow_html=True)
-    try:
-        from streamlit_autorefresh import st_autorefresh
-        st_autorefresh(interval=10000, key='ergebnis_refresh')
-    except Exception:
-        import streamlit.components.v1 as components
-        components.html('<script>setTimeout(function(){window.parent.location.reload();},10000);</script>', height=0)
+    if str(st.query_params.get('live', '')).strip().lower() in ('1', 'true', 'ja', 'yes'):
+        try:
+            from streamlit_autorefresh import st_autorefresh
+            st_autorefresh(interval=10000, key='ergebnis_refresh')
+        except Exception:
+            import streamlit.components.v1 as components
+            components.html('<script>setTimeout(function(){window.parent.location.reload();},10000);</script>', height=0)
     cfg = _gh_cfg()
     if not cfg:
         st.info('Ansichts-Modus ist nicht konfiguriert (GitHub-Secrets fehlen).')
