@@ -416,40 +416,179 @@ def sicherung_body(question, arguments):
     return SICH_CSS + _sich_table(arguments)
 
 
-# Feste Pixel-Fassung für den JPEG-Export (wkhtmltoimage kennt kein vmin/clamp).
-SICH_CSS_PX = '''<style>
-* { box-sizing: border-box; }
-body { margin:0; background:#fff; }
-.sich { font-family: Arial, Helvetica, sans-serif; color:#1f2430; width:1400px; }
-.sich table.mx { width:100%; border-collapse:collapse; table-layout:fixed; }
-.sich table.mx th, .sich table.mx td { border:1px solid #b9c4d0; padding:10px 12px; vertical-align:top; font-size:22px; }
-.sich .h-pro { background:#2f9e44; color:#fff; text-align:center; font-size:26px; }
-.sich .h-kontra { background:#e03131; color:#fff; text-align:center; font-size:26px; }
-.sich .sub-pro { background:#eaf7ee; text-align:center; font-size:20px; }
-.sich .sub-kontra { background:#fdeeee; text-align:center; font-size:20px; }
-.sich .arg { line-height:1.35; }
-.sich .beleg { font-size:18px; color:#5a6b7a; font-style:italic; margin-top:4px; }
-.sich .cat { display:inline-block; background:#eef2f7; border:1px solid #cdd8e4; border-radius:12px; padding:1px 10px; font-size:18px; margin:2px 4px 2px 0; }
-.sich .nobeleg { display:inline-block; background:#fff3bf; border:1px solid #f2c94c; border-radius:12px; padding:1px 10px; font-size:18px; margin-top:3px; color:#8a6d00; }
-.sich td.empty { background:#fbfcfd; }
-.sich .dash { color:#b0b0b0; }
-.sich b { font-weight:700; }
-</style>'''
+# ---------------------------------------------------------------------------
+# JPEG-Export der Matrix – direkt mit Pillow gezeichnet. Kein Systempaket wie
+# wkhtmltopdf nötig (das gibt es auf neueren Streamlit-Cloud-Images nicht mehr).
+# ---------------------------------------------------------------------------
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    _PIL_OK = True
+except Exception:
+    _PIL_OK = False
+
+_SCRATCH = None
+
+
+def _scratch_draw():
+    global _SCRATCH
+    if _SCRATCH is None:
+        _SCRATCH = ImageDraw.Draw(Image.new('RGB', (4, 4)))
+    return _SCRATCH
+
+
+def _jpg_font(size, bold=False, italic=False):
+    if bold and italic: names = ['DejaVuSans-BoldOblique.ttf']
+    elif bold: names = ['DejaVuSans-Bold.ttf']
+    elif italic: names = ['DejaVuSans-Oblique.ttf']
+    else: names = ['DejaVuSans.ttf']
+    for d in ('/usr/share/fonts/truetype/dejavu/', ''):
+        for n in names:
+            try: return ImageFont.truetype(d + n, size)
+            except Exception: pass
+    return ImageFont.load_default()
+
+
+def _jtw(t, f):
+    try: return _scratch_draw().textlength(t, font=f)
+    except Exception:
+        try: return f.getbbox(t)[2]
+        except Exception: return len(t) * 8
+
+
+def _jkwset(a):
+    s = set()
+    for kw in (a.get('keywords') or []):
+        for w in re.split(r'\s+', kw or ''):
+            nn = re.sub(r'[^0-9A-Za-zÄÖÜäöüß-]', '', w).lower()
+            if len(nn) > 1: s.add(nn)
+    return s
+
+
+def _jtokens(text, kwset):
+    out = []
+    for w in text.split():
+        nn = re.sub(r'[^0-9A-Za-zÄÖÜäöüß-]', '', w).lower()
+        out.append((w, (nn in kwset and len(nn) > 1)))
+    return out
+
+
+def _jwrap(tokens, reg, bold, max_w):
+    sp = _jtw(' ', reg); lines = []; cur = []; cw = 0
+    for w, b in tokens:
+        f = bold if b else reg; ww = _jtw(w, f); add = ww + (sp if cur else 0)
+        if cur and cw + add > max_w:
+            lines.append(cur); cur = [(w, f, ww)]; cw = ww
+        else:
+            cur.append((w, f, ww)); cw += add
+    if cur: lines.append(cur)
+    return lines, sp
+
+
+def _jdrawline(d, x, y, line, sp, color):
+    cx = x
+    for w, f, ww in line:
+        d.text((cx, y), w, font=f, fill=color); cx += ww + sp
 
 
 def sicherung_jpeg(arguments):
-    """Rendert die Matrix als JPEG (bytes) via wkhtmltoimage. None, wenn nicht verfügbar."""
+    """Rendert die Argument-Matrix als JPEG (bytes) direkt mit Pillow – ohne
+    Systempakete. None, wenn Pillow fehlt oder das Zeichnen scheitert."""
+    if not _PIL_OK:
+        return None
     try:
-        import imgkit
+        return _render_matrix_jpeg(arguments)
     except Exception:
         return None
-    doc = ('<!doctype html><html lang="de"><head><meta charset="utf-8">'
-           + SICH_CSS_PX + '</head><body>' + _sich_table(arguments) + '</body></html>')
-    options = {'format': 'jpeg', 'quality': '92', 'width': '1400', 'encoding': 'UTF-8', 'quiet': ''}
-    try:
-        return imgkit.from_string(doc, False, options=options)
-    except Exception:
-        return None
+
+
+def _render_matrix_jpeg(arguments):
+    import io
+    PADX, PADY = 14, 10
+    ARG, CAT = 462, 238                       # 0.33 / 0.17 von 1400 px
+    xs = [0, ARG, ARG + CAT, ARG + CAT + ARG, ARG + CAT + ARG + CAT]
+    W = xs[4]
+    reg = _jpg_font(22); bold = _jpg_font(22, bold=True)
+    ireg = _jpg_font(18, italic=True); ibold = _jpg_font(18, bold=True, italic=True)
+    hfont = _jpg_font(26, bold=True); sfont = _jpg_font(20, bold=True); catf = _jpg_font(18)
+    LH, BLH, HEAD, SUB = 30, 24, 46, 34
+    TXT, BEL, B = (31, 36, 48), (90, 107, 122), (185, 196, 208)
+    pro = [a for a in arguments if a.get('side') == 'PRO']
+    kontra = [a for a in arguments if a.get('side') == 'KONTRA']
+    n = max(len(pro), len(kontra), 1)
+
+    def chips_h(chips, maxw):
+        ch = catf.size + 8; gap = 6; pad = 8; cx = 0; rows_ = 1
+        for text, _k in chips:
+            cw = _jtw(text, catf) + 2 * pad
+            if cx > 0 and cx + cw > maxw: cx = 0; rows_ += 1
+            cx += cw + gap
+        return rows_ * (ch + gap)
+
+    def draw_chips(d, x, y, chips, maxw):
+        ch = catf.size + 8; gap = 6; pad = 8; cx = x; cy = y
+        for text, kind in chips:
+            cw = _jtw(text, catf) + 2 * pad
+            if cx > x and cx + cw > x + maxw: cx = x; cy += ch + gap
+            if kind == 'nobeleg': bg, bd, tc = (255, 243, 191), (242, 201, 76), (138, 109, 0)
+            else: bg, bd, tc = (238, 242, 247), (205, 216, 228), (70, 70, 70)
+            d.rounded_rectangle([cx, cy, cx + cw, cy + ch], radius=ch // 2, fill=bg, outline=bd, width=1)
+            d.text((cx + pad, cy + 3), text, font=catf, fill=tc); cx += cw + gap
+
+    def plan(a):
+        if not a: return {'empty': True, 'h': 40}
+        kw = _jkwset(a)
+        arg_lines, sp = _jwrap(_jtokens(_short_arg(a), kw), reg, bold, ARG - 2 * PADX)
+        h = len(arg_lines) * LH
+        ev = re.sub(r'\s+', ' ', (a.get('evidence', '') or '')).strip()
+        bel_lines = []
+        if ev:
+            bel_lines, _sp = _jwrap(_jtokens('Beleg: ' + ev, kw), ireg, ibold, ARG - 2 * PADX)
+            h += 6 + len(bel_lines) * BLH
+        chips = [(c, 'cat') for c in (a.get('democracy_criteria') or [])]
+        if not ev: chips.append(('⚠ ohne Beleg', 'nobeleg'))
+        return {'empty': False, 'arg_lines': arg_lines, 'sp': sp, 'bel_lines': bel_lines,
+                'chips': chips, 'h': max(h, chips_h(chips, CAT - 2 * PADX), LH)}
+
+    rows = []
+    for i in range(n):
+        cp = plan(pro[i] if i < len(pro) else None)
+        ck = plan(kontra[i] if i < len(kontra) else None)
+        rows.append((cp, ck, max(cp['h'], ck['h']) + 2 * PADY))
+    total = HEAD + SUB + sum(r[2] for r in rows) + 1
+    img = Image.new('RGB', (W, total), (255, 255, 255)); d = ImageDraw.Draw(img)
+
+    d.rectangle([xs[0], 0, xs[2], HEAD], fill=(47, 158, 68))
+    d.rectangle([xs[2], 0, xs[4], HEAD], fill=(224, 49, 49))
+    for label, x0, x1 in [('PRO (dafür)', xs[0], xs[2]), ('KONTRA (dagegen)', xs[2], xs[4])]:
+        tw = _jtw(label, hfont); d.text((x0 + (x1 - x0 - tw) / 2, (HEAD - 26) / 2 - 2), label, font=hfont, fill=(255, 255, 255))
+    y = HEAD
+    for label, ci, bg in [('Argument', 0, (234, 247, 238)), ('Kategorie', 1, (234, 247, 238)),
+                          ('Argument', 2, (253, 238, 238)), ('Kategorie', 3, (253, 238, 238))]:
+        d.rectangle([xs[ci], y, xs[ci + 1], y + SUB], fill=bg)
+        tw = _jtw(label, sfont); d.text((xs[ci] + (xs[ci + 1] - xs[ci] - tw) / 2, y + 6), label, font=sfont, fill=(40, 40, 40))
+    y += SUB
+    for cp, ck, rh in rows:
+        for pl, argx, catx in [(cp, xs[0], xs[1]), (ck, xs[2], xs[3])]:
+            if pl['empty']:
+                d.rectangle([argx, y, argx + ARG, y + rh], fill=(251, 252, 253))
+                d.rectangle([catx, y, catx + CAT, y + rh], fill=(251, 252, 253))
+                continue
+            ty = y + PADY
+            for ln in pl['arg_lines']:
+                _jdrawline(d, argx + PADX, ty, ln, pl['sp'], TXT); ty += LH
+            if pl['bel_lines']:
+                ty += 4
+                for ln in pl['bel_lines']:
+                    _jdrawline(d, argx + PADX, ty, ln, pl['sp'], BEL); ty += BLH
+            draw_chips(d, catx + PADX, y + PADY, pl['chips'], CAT - 2 * PADX)
+        y += rh
+    d.line([0, 0, W - 1, 0], fill=B); yy = 0
+    for hh in [HEAD, SUB] + [r[2] for r in rows]:
+        yy += hh; d.line([0, yy, W - 1, yy], fill=B)
+    for x in xs:
+        xx = min(x, W - 1); d.line([xx, 0, xx, total - 1], fill=B)
+    buf = io.BytesIO(); img.save(buf, 'JPEG', quality=92)
+    return buf.getvalue()
 
 
 def sicherung_doc(question, arguments):
