@@ -375,14 +375,16 @@ def _bold_keywords(escaped_text, keywords):
     return escaped_text
 
 
-def _sich_cell(a):
+def _sich_cell(a, show_cats=True):
     if not a:
-        return '<td class="empty"></td><td class="empty"></td>'
+        return '<td class="empty"></td><td class="empty"></td>' if show_cats else '<td class="empty"></td>'
     kw = a.get('keywords')
     arg = f'<div class="arg">{_bold_keywords(html.escape(_short_arg(a)), kw)}</div>'
     ev = re.sub(r'\s+', ' ', (a.get('evidence', '') or '')).strip()
     if ev:
         arg += f'<div class="beleg">Beleg: {_bold_keywords(html.escape(ev), kw)}</div>'
+    if not show_cats:
+        return f'<td>{arg}</td>'
     cats = a.get('democracy_criteria', []) or []
     cat = ''.join(f'<span class="cat">{html.escape(c)}</span>' for c in cats)
     if not ev:
@@ -392,8 +394,9 @@ def _sich_cell(a):
     return f'<td>{arg}</td><td>{cat}</td>'
 
 
-def _sich_table(arguments):
-    """Baut nur die Matrix-Tabelle (ohne CSS): PRO/KONTRA mit Argument + Kategorie."""
+def _sich_table(arguments, show_cats=True):
+    """Baut nur die Matrix-Tabelle (ohne CSS). Mit show_cats zusätzlich die
+    Kategorie-Spalten; ohne show_cats nur die beiden Argument-Spalten."""
     pro = [a for a in arguments if a.get('side') == 'PRO']
     kontra = [a for a in arguments if a.get('side') == 'KONTRA']
     n = max(len(pro), len(kontra), 1)
@@ -401,19 +404,23 @@ def _sich_table(arguments):
     for i in range(n):
         p = pro[i] if i < len(pro) else None
         k = kontra[i] if i < len(kontra) else None
-        rows.append('<tr>' + _sich_cell(p) + _sich_cell(k) + '</tr>')
-    W = '<col style="width:33%"><col style="width:17%"><col style="width:33%"><col style="width:17%">'
-    table = (f'<table class="mx"><colgroup>{W}</colgroup>'
-             f'<tr><th class="h-pro" colspan="2">PRO (dafür)</th><th class="h-kontra" colspan="2">KONTRA (dagegen)</th></tr>'
-             f'<tr><th class="sub-pro">Argument</th><th class="sub-pro">Kategorie</th>'
-             f'<th class="sub-kontra">Argument</th><th class="sub-kontra">Kategorie</th></tr>'
-             f'{"".join(rows)}</table>')
+        rows.append('<tr>' + _sich_cell(p, show_cats) + _sich_cell(k, show_cats) + '</tr>')
+    if show_cats:
+        W = '<col style="width:33%"><col style="width:17%"><col style="width:33%"><col style="width:17%">'
+        head = ('<tr><th class="h-pro" colspan="2">PRO (dafür)</th><th class="h-kontra" colspan="2">KONTRA (dagegen)</th></tr>'
+                '<tr><th class="sub-pro">Argument</th><th class="sub-pro">Kategorie</th>'
+                '<th class="sub-kontra">Argument</th><th class="sub-kontra">Kategorie</th></tr>')
+    else:
+        W = '<col style="width:50%"><col style="width:50%">'
+        head = ('<tr><th class="h-pro">PRO (dafür)</th><th class="h-kontra">KONTRA (dagegen)</th></tr>'
+                '<tr><th class="sub-pro">Argument</th><th class="sub-kontra">Argument</th></tr>')
+    table = f'<table class="mx"><colgroup>{W}</colgroup>{head}{"".join(rows)}</table>'
     return '<div class="sich">' + table + '</div>'
 
 
-def sicherung_body(question, arguments):
+def sicherung_body(question, arguments, show_cats=True):
     """Bildschirm-/Beamer-Fassung (4:3, mitskalierende Schrift)."""
-    return SICH_CSS + _sich_table(arguments)
+    return SICH_CSS + _sich_table(arguments, show_cats)
 
 
 # ---------------------------------------------------------------------------
@@ -490,28 +497,44 @@ def _jdrawline(d, x, y, line, sp, color):
         d.text((cx, y), w, font=f, fill=color); cx += ww + sp
 
 
-def sicherung_jpeg(arguments):
+def sicherung_jpeg(arguments, show_cats=True):
     """Rendert die Argument-Matrix als JPEG (bytes) direkt mit Pillow – ohne
     Systempakete. None, wenn Pillow fehlt oder das Zeichnen scheitert."""
     if not _PIL_OK:
         return None
     try:
-        return _render_matrix_jpeg(arguments)
+        return _render_matrix_jpeg(arguments, show_cats)
     except Exception:
         return None
 
 
-def _render_matrix_jpeg(arguments):
+def _render_matrix_jpeg(arguments, show_cats=True):
     import io
     PADX, PADY = 14, 10
-    ARG, CAT = 462, 238                       # 0.33 / 0.17 von 1400 px
-    xs = [0, ARG, ARG + CAT, ARG + CAT + ARG, ARG + CAT + ARG + CAT]
-    W = xs[4]
     reg = _jpg_font(22); bold = _jpg_font(22, bold=True)
     ireg = _jpg_font(18, italic=True); ibold = _jpg_font(18, bold=True, italic=True)
     hfont = _jpg_font(26, bold=True); sfont = _jpg_font(20, bold=True); catf = _jpg_font(18)
     LH, BLH, HEAD, SUB = 30, 24, 46, 34
     TXT, BEL, B = (31, 36, 48), (90, 107, 122), (185, 196, 208)
+    GREEN, RED, SPG, SPK = (47, 158, 68), (224, 49, 49), (234, 247, 238), (253, 238, 238)
+
+    if show_cats:
+        ARG, CAT = 462, 238                   # 0.33 / 0.17 von 1400 px
+        xs = [0, ARG, ARG + CAT, ARG + CAT + ARG, ARG + CAT + ARG + CAT]
+        # (plan, argx, catx) je Seite:
+        def side_cols(cp, ck):
+            return [(cp, xs[0], xs[1]), (ck, xs[2], xs[3])]
+        head_spans = [(xs[0], xs[2], 'PRO (dafür)', GREEN), (xs[2], xs[4], 'KONTRA (dagegen)', RED)]
+        subs = [('Argument', xs[0], xs[1], SPG), ('Kategorie', xs[1], xs[2], SPG),
+                ('Argument', xs[2], xs[3], SPK), ('Kategorie', xs[3], xs[4], SPK)]
+    else:
+        ARG, CAT = 700, 0                      # nur zwei Argument-Spalten
+        xs = [0, ARG, ARG + ARG]
+        def side_cols(cp, ck):
+            return [(cp, xs[0], None), (ck, xs[1], None)]
+        head_spans = [(xs[0], xs[1], 'PRO (dafür)', GREEN), (xs[1], xs[2], 'KONTRA (dagegen)', RED)]
+        subs = [('Argument', xs[0], xs[1], SPG), ('Argument', xs[1], xs[2], SPK)]
+    W = xs[-1]
     pro = [a for a in arguments if a.get('side') == 'PRO']
     kontra = [a for a in arguments if a.get('side') == 'KONTRA']
     n = max(len(pro), len(kontra), 1)
@@ -544,10 +567,13 @@ def _render_matrix_jpeg(arguments):
         if ev:
             bel_lines, _sp = _jwrap(_jtokens('Beleg: ' + ev, kw), ireg, ibold, ARG - 2 * PADX)
             h += 6 + len(bel_lines) * BLH
-        chips = [(c, 'cat') for c in (a.get('democracy_criteria') or [])]
-        if not ev: chips.append(('⚠ ohne Beleg', 'nobeleg'))
+        chips = []
+        if show_cats:
+            chips = [(c, 'cat') for c in (a.get('democracy_criteria') or [])]
+            if not ev: chips.append(('⚠ ohne Beleg', 'nobeleg'))
+        ch = chips_h(chips, CAT - 2 * PADX) if chips else 0
         return {'empty': False, 'arg_lines': arg_lines, 'sp': sp, 'bel_lines': bel_lines,
-                'chips': chips, 'h': max(h, chips_h(chips, CAT - 2 * PADX), LH)}
+                'chips': chips, 'h': max(h, ch, LH)}
 
     rows = []
     for i in range(n):
@@ -557,21 +583,20 @@ def _render_matrix_jpeg(arguments):
     total = HEAD + SUB + sum(r[2] for r in rows) + 1
     img = Image.new('RGB', (W, total), (255, 255, 255)); d = ImageDraw.Draw(img)
 
-    d.rectangle([xs[0], 0, xs[2], HEAD], fill=(47, 158, 68))
-    d.rectangle([xs[2], 0, xs[4], HEAD], fill=(224, 49, 49))
-    for label, x0, x1 in [('PRO (dafür)', xs[0], xs[2]), ('KONTRA (dagegen)', xs[2], xs[4])]:
+    for x0, x1, label, col in head_spans:
+        d.rectangle([x0, 0, x1, HEAD], fill=col)
         tw = _jtw(label, hfont); d.text((x0 + (x1 - x0 - tw) / 2, (HEAD - 26) / 2 - 2), label, font=hfont, fill=(255, 255, 255))
     y = HEAD
-    for label, ci, bg in [('Argument', 0, (234, 247, 238)), ('Kategorie', 1, (234, 247, 238)),
-                          ('Argument', 2, (253, 238, 238)), ('Kategorie', 3, (253, 238, 238))]:
-        d.rectangle([xs[ci], y, xs[ci + 1], y + SUB], fill=bg)
-        tw = _jtw(label, sfont); d.text((xs[ci] + (xs[ci + 1] - xs[ci] - tw) / 2, y + 6), label, font=sfont, fill=(40, 40, 40))
+    for label, x0, x1, bg in subs:
+        d.rectangle([x0, y, x1, y + SUB], fill=bg)
+        tw = _jtw(label, sfont); d.text((x0 + (x1 - x0 - tw) / 2, y + 6), label, font=sfont, fill=(40, 40, 40))
     y += SUB
     for cp, ck, rh in rows:
-        for pl, argx, catx in [(cp, xs[0], xs[1]), (ck, xs[2], xs[3])]:
+        for pl, argx, catx in side_cols(cp, ck):
             if pl['empty']:
                 d.rectangle([argx, y, argx + ARG, y + rh], fill=(251, 252, 253))
-                d.rectangle([catx, y, catx + CAT, y + rh], fill=(251, 252, 253))
+                if catx is not None:
+                    d.rectangle([catx, y, catx + CAT, y + rh], fill=(251, 252, 253))
                 continue
             ty = y + PADY
             for ln in pl['arg_lines']:
@@ -580,7 +605,8 @@ def _render_matrix_jpeg(arguments):
                 ty += 4
                 for ln in pl['bel_lines']:
                     _jdrawline(d, argx + PADX, ty, ln, pl['sp'], BEL); ty += BLH
-            draw_chips(d, catx + PADX, y + PADY, pl['chips'], CAT - 2 * PADX)
+            if catx is not None:
+                draw_chips(d, catx + PADX, y + PADY, pl['chips'], CAT - 2 * PADX)
         y += rh
     d.line([0, 0, W - 1, 0], fill=B); yy = 0
     for hh in [HEAD, SUB] + [r[2] for r in rows]:
@@ -591,11 +617,11 @@ def _render_matrix_jpeg(arguments):
     return buf.getvalue()
 
 
-def sicherung_doc(question, arguments):
+def sicherung_doc(question, arguments, show_cats=True):
     """Vollständiges, druckbares HTML-Dokument (A4 quer) für den Download."""
     return ('<!doctype html><html lang="de"><head><meta charset="utf-8">'
             '<title>Argument-Sicherung</title></head><body>'
-            + sicherung_body(question, arguments) + '</body></html>')
+            + sicherung_body(question, arguments, show_cats) + '</body></html>')
 
 
 # ---------------------------------------------------------------------------
@@ -691,17 +717,20 @@ def render_view_mode(token):
 def sicherung_ui(question, arguments, key):
     """Button + Vorschau + Download für die einseitige Argument-Sicherung."""
     st.markdown('#### 📄 Übersicht für die Stellungnahme')
-    st.caption('Erzeugt eine 4:3-Beamer-Übersicht: Pro- und Kontra-Argumente in gekürzter, verständlicher Form '
-               'mit Kategorie (Hinweis „ohne Beleg", wenn ein Argument keinen Beleg enthält).')
+    st.caption('Erzeugt eine 4:3-Beamer-Übersicht: Pro- und Kontra-Argumente in gekürzter, verständlicher Form. '
+               'Die zugeordneten Kategorien (Demokratie-Kriterien) sind zunächst ausgeblendet und lassen sich bei Bedarf einblenden.')
     if st.button('Übersicht / Argument-Sicherung erstellen', key=f'sich_btn_{key}', use_container_width=True):
         st.session_state[f'show_sich_{key}'] = True
     if st.session_state.get(f'show_sich_{key}'):
-        st.markdown(sicherung_body(question, arguments), unsafe_allow_html=True)
+        show_cats = st.checkbox('Kategorien (Demokratie-Kriterien) einblenden', value=False, key=f'sich_cats_{key}',
+                                help='Standard: aus. Zum Einblenden anhaken. Für die Beamer-Ansicht danach erneut '
+                                     '„Ergebnis veröffentlichen" – dann erscheinen die Kategorien auch im veröffentlichten Bild.')
+        st.markdown(sicherung_body(question, arguments, show_cats), unsafe_allow_html=True)
         st.download_button('Als 4:3-Seite für den Beamer herunterladen (im Browser mit F11 auf Vollbild)',
-                           sicherung_doc(question, arguments).encode('utf-8'),
+                           sicherung_doc(question, arguments, show_cats).encode('utf-8'),
                            'argument_sicherung_4zu3.html', 'text/html',
                            key=f'sich_dl_{key}', use_container_width=True)
-        jpg = sicherung_jpeg(arguments)
+        jpg = sicherung_jpeg(arguments, show_cats)
         if jpg:
             st.download_button('Matrix als JPEG-Bild herunterladen', jpg,
                                'argument_matrix.jpg', 'image/jpeg',
@@ -726,9 +755,9 @@ def sicherung_ui(question, arguments, key):
             if not c:
                 st.warning('Bitte einen Klassencode angeben.')
             else:
-                jpg_pub = sicherung_jpeg(arguments)
+                jpg_pub = sicherung_jpeg(arguments, show_cats)
                 if not jpg_pub:
-                    st.error('JPEG konnte nicht erzeugt werden (wkhtmltopdf fehlt?).')
+                    st.error('JPEG konnte nicht erzeugt werden.')
                 else:
                     try:
                         ok, resp = github_put_image(cfg, _result_path(c), jpg_pub, f'Ergebnis {c} aktualisiert')
