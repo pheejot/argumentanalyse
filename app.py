@@ -126,9 +126,31 @@ def time_label(arg, pos) -> str:
     return fmt_mmss(arg['time_sec']) if arg.get('time_sec') is not None else f'#{pos}'
 
 
+_NOISE_TOKENS = ('lachen', 'gelächter', 'lacht', 'kichern', 'applaus', 'beifall', 'klatschen')
+
+
+def _strip_noise(text):
+    """Entfernt typische Störgeräusch-Vermerke aus dem Transkript. whisper setzt
+    Nicht-Sprache meist in Klammern/eckige Klammern/Sternchen (z. B. „(Lachen)",
+    „[Applaus]"). Diese werden entfernt; zusätzlich einige eindeutig nicht-inhalt-
+    liche Einzeltoken. Sachbegriffe (z. B. „Musik", „Pause") bleiben erhalten."""
+    if not text:
+        return ''
+    t = text
+    t = re.sub(r'\([^()]*\)', ' ', t)          # (Lachen), (lacht) …
+    t = re.sub(r'\[[^\]]*\]', ' ', t)          # [Applaus] …
+    t = re.sub(r'\*[^*]*\*', ' ', t)           # *lacht* …
+    t = re.sub(r'(?i)\bUntertitel(?:ung)?[^.\n]*', ' ', t)   # whisper-Halluzination bei Stille
+    for w in _NOISE_TOKENS:
+        t = re.sub(rf'(?i)\b{w}\b[\s.,;:!…]*', ' ', t)
+    t = re.sub(r'\s+([,.;:!?…])', r'\1', t)
+    return re.sub(r'\s+', ' ', t).strip()
+
+
 def transcribe_audio(client: OpenAI, uploaded_file):
     """Transkribiert mit Segment-Zeitstempeln (whisper-1, verbose_json).
-    Rückgabe: (text, segments) mit segments = [{'start','end','text'}, ...]."""
+    Rückgabe: (text, segments) mit segments = [{'start','end','text'}, ...].
+    Störgeräusch-Vermerke (Lachen, Applaus …) werden herausgefiltert."""
     suffix = Path(uploaded_file.name).suffix or '.wav'
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.getbuffer())
@@ -142,13 +164,16 @@ def transcribe_audio(client: OpenAI, uploaded_file):
                 response_format='verbose_json',
                 timestamp_granularities=['segment'],
             )
-        text = getattr(result, 'text', '') or ''
+        text = _strip_noise(getattr(result, 'text', '') or '')
         segs = []
         for s in (getattr(result, 'segments', None) or []):
             if isinstance(s, dict):
-                segs.append({'start': s.get('start', 0.0), 'end': s.get('end', 0.0), 'text': s.get('text', '')})
+                st_, en_, tx_ = s.get('start', 0.0), s.get('end', 0.0), s.get('text', '')
             else:
-                segs.append({'start': getattr(s, 'start', 0.0), 'end': getattr(s, 'end', 0.0), 'text': getattr(s, 'text', '')})
+                st_, en_, tx_ = getattr(s, 'start', 0.0), getattr(s, 'end', 0.0), getattr(s, 'text', '')
+            tx_ = _strip_noise(tx_)
+            if tx_:
+                segs.append({'start': st_, 'end': en_, 'text': tx_})
         return text, segs
     finally:
         try:
@@ -343,7 +368,8 @@ SICH_CSS = '''<style>
 .sich * { box-sizing: border-box; }
 .sich { font-family: Arial, Helvetica, sans-serif; color:#1f2430; width:100%; margin:0 auto; }
 .sich table.mx { width:100%; border-collapse:collapse; table-layout:fixed; }
-.sich table.mx th, .sich table.mx td { border:1px solid #b9c4d0; padding:0.7vmin 0.9vmin; vertical-align:top; font-size:clamp(13px,1.9vmin,32px); }
+.sich table.mx th, .sich table.mx td { border:1px solid #b9c4d0; padding:0.7vmin 0.9vmin; vertical-align:top; font-size:clamp(13px,1.9vmin,32px); overflow-wrap:break-word; word-break:break-word; hyphens:auto; }
+.sich .arg, .sich .beleg { overflow-wrap:break-word; word-break:break-word; }
 .sich .h-pro { background:#2f9e44; color:#fff; text-align:center; font-size:clamp(15px,2.3vmin,40px); }
 .sich .h-kontra { background:#e03131; color:#fff; text-align:center; font-size:clamp(15px,2.3vmin,40px); }
 .sich .sub-pro { background:#eaf7ee; text-align:center; }
@@ -357,10 +383,15 @@ SICH_CSS = '''<style>
 </style>'''
 
 
-def _short_arg(a, limit=120):
-    """Komprimierte, aber verständliche Kurzfassung: Kernaussage (Behauptung),
-    sonst der Argument-Wortlaut; bei Bedarf am Wortende gekürzt."""
-    t = (a.get('claim', '') or '').strip() or (a.get('quote_full', '') or '').strip()
+def _short_arg(a, limit=210):
+    """Etwas ausführlichere, aber kompakte Fassung: Behauptung, ergänzt um die
+    Begründung (falls vorhanden); bei Überlänge am Wortende gekürzt."""
+    claim = (a.get('claim', '') or '').strip()
+    reason = (a.get('reason', '') or '').strip()
+    if claim and reason and reason.lower() not in claim.lower():
+        t = f'{claim} – {reason}'
+    else:
+        t = claim or (a.get('quote_full', '') or '').strip()
     t = re.sub(r'\s+', ' ', t)
     if len(t) > limit:
         t = t[:limit].rsplit(' ', 1)[0].rstrip(' ,;:–-') + '…'
@@ -482,12 +513,28 @@ def _jtokens(text, kwset):
 
 def _jwrap(tokens, reg, bold, max_w):
     sp = _jtw(' ', reg); lines = []; cur = []; cw = 0
+
+    def _split_long(word, f):
+        """Zerlegt ein einzelnes zu breites Wort zeichenweise, damit es nicht
+        über die Zelle hinausragt."""
+        parts = []; piece = ''
+        for ch in word:
+            if piece and _jtw(piece + ch, f) > max_w:
+                parts.append(piece); piece = ch
+            else:
+                piece += ch
+        if piece: parts.append(piece)
+        return parts
+
     for w, b in tokens:
-        f = bold if b else reg; ww = _jtw(w, f); add = ww + (sp if cur else 0)
-        if cur and cw + add > max_w:
-            lines.append(cur); cur = [(w, f, ww)]; cw = ww
-        else:
-            cur.append((w, f, ww)); cw += add
+        f = bold if b else reg
+        subwords = _split_long(w, f) if _jtw(w, f) > max_w else [w]
+        for sw in subwords:
+            ww = _jtw(sw, f); add = ww + (sp if cur else 0)
+            if cur and cw + add > max_w:
+                lines.append(cur); cur = [(sw, f, ww)]; cw = ww
+            else:
+                cur.append((sw, f, ww)); cw += add
     if cur: lines.append(cur)
     return lines, sp
 
@@ -802,15 +849,32 @@ live_audio = None
 
 if mode == 'Live-Mikrofon':
     st.subheader('🎙️ Live-Diskussion')
-    st.caption('Nimm jeweils einen kurzen Diskussionsabschnitt auf. Nach dem Verarbeiten wächst die PRO-/KONTRA-Ansicht automatisch weiter.')
-    live_audio = st.audio_input('Nächsten Diskussionsabschnitt aufnehmen')
+    st.caption('Nimm jeweils einen kurzen Diskussionsabschnitt auf. Nach dem Verarbeiten wächst die PRO-/KONTRA-Ansicht automatisch weiter. '
+               'Tipp: lieber mehrere kurze Abschnitte – jeder ausgewertete Abschnitt ist gesichert.')
+    st.markdown('''<style>
+    [data-testid="stAudioInput"] { min-height: 104px; }
+    [data-testid="stAudioInput"] button { min-height:64px !important; min-width:64px !important; border-radius:14px !important; }
+    [data-testid="stAudioInput"] button svg { width:34px !important; height:34px !important; }
+    [data-testid="stAudioInput"] label p { font-size:1.15rem !important; font-weight:700 !important; }
+    div.stButton > button { min-height: 56px; font-size: 1.05rem; }
+    </style>''', unsafe_allow_html=True)
+    live_audio = st.audio_input('🎙️ Aufnahme starten / stoppen (auf das Mikrofon tippen)')
     lc1, lc2 = st.columns([2,1])
     process_live = lc1.button('Abschnitt live auswerten', type='primary', use_container_width=True)
     clear_live = lc2.button('Live-Sitzung leeren', use_container_width=True)
     if clear_live:
-        for key in ['live_transcript','live_arguments','live_question','live_offset']:
-            st.session_state.pop(key, None)
-        st.rerun()
+        st.session_state['confirm_clear'] = True
+    if st.session_state.get('confirm_clear'):
+        st.warning('Wirklich alles löschen? Das bisherige Transkript und alle Argumente dieser Sitzung gehen dabei verloren.')
+        cc1, cc2 = st.columns(2)
+        if cc1.button('Ja, wirklich leeren', key='confirm_clear_yes', use_container_width=True):
+            for k in ['live_transcript', 'live_arguments', 'live_question', 'live_offset']:
+                st.session_state.pop(k, None)
+            st.session_state.pop('confirm_clear', None)
+            st.rerun()
+        if cc2.button('Abbrechen', key='confirm_clear_no', use_container_width=True):
+            st.session_state.pop('confirm_clear', None)
+            st.rerun()
 
     if process_live:
         if not api_key:
