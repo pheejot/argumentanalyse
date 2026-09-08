@@ -17,12 +17,17 @@ except Exception:
 st.set_page_config(page_title='Diskussions-Analysator', page_icon=_ICON, layout='wide')
 
 # Zwei-Finger-Zoom auf dem Handy erlauben (Streamlit sperrt das sonst per Viewport-Meta).
+# Wird mehrfach angewandt (auch window.top), falls Streamlit die Meta-Angabe nachträglich zurücksetzt.
 try:
     import streamlit.components.v1 as _components
     _components.html(
-        "<script>try{var d=window.parent.document;var m=d.querySelector('meta[name=viewport]');"
-        "if(!m){m=d.createElement('meta');m.setAttribute('name','viewport');d.head.appendChild(m);}"
-        "m.setAttribute('content','width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes');}catch(e){}</script>",
+        "<script>"
+        "function _fix(doc){try{var m=doc.querySelector('meta[name=viewport]');"
+        "if(!m){m=doc.createElement('meta');m.setAttribute('name','viewport');doc.head.appendChild(m);}"
+        "m.setAttribute('content','width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes');}catch(e){}}"
+        "function _all(){try{_fix(window.parent.document);}catch(e){} try{_fix(window.top.document);}catch(e){}}"
+        "_all();var _n=0;var _iv=setInterval(function(){_all();if(++_n>12)clearInterval(_iv);},400);"
+        "</script>",
         height=0,
     )
 except Exception:
