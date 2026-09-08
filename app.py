@@ -33,6 +33,14 @@ try:
 except Exception:
     pass
 
+# Größere Tippflächen fürs Handy (Buttons, Umschalter, Beschriftungen).
+st.markdown('''<style>
+  div.stButton > button { min-height: 50px; font-size: 1.03rem; }
+  [data-testid="stWidgetLabel"] p { font-size: 1.05rem; }
+  label[data-baseweb="checkbox"] { padding: 8px 0; }
+  label[data-baseweb="checkbox"] > div:first-child { transform: scale(1.35); transform-origin: left center; margin-right: 6px; }
+</style>''', unsafe_allow_html=True)
+
 COLORS = {
     'Behauptung': '#ffe066',   # gelb
     'Begründung': '#8ce99a',   # grün
@@ -787,9 +795,9 @@ def sicherung_ui(question, arguments, key):
     if st.button('Übersicht / Argument-Sicherung erstellen', key=f'sich_btn_{key}', use_container_width=True):
         st.session_state[f'show_sich_{key}'] = True
     if st.session_state.get(f'show_sich_{key}'):
-        show_cats = st.checkbox('Kategorien (Demokratie-Kriterien) einblenden', value=False, key=f'sich_cats_{key}',
-                                help='Standard: aus. Zum Einblenden anhaken. Für die Beamer-Ansicht danach erneut '
-                                     '„Ergebnis veröffentlichen" – dann erscheinen die Kategorien auch im veröffentlichten Bild.')
+        show_cats = st.toggle('Kategorien (Demokratie-Kriterien) einblenden', value=False, key=f'sich_cats_{key}',
+                              help='Standard: aus. Zum Einblenden einschalten. Für die Beamer-Ansicht danach erneut '
+                                   '„Ergebnis veröffentlichen" – dann erscheinen die Kategorien auch im veröffentlichten Bild.')
         st.markdown(sicherung_body(question, arguments, show_cats), unsafe_allow_html=True)
         st.download_button('Als 4:3-Seite für den Beamer herunterladen (im Browser mit F11 auf Vollbild)',
                            sicherung_doc(question, arguments, show_cats).encode('utf-8'),
