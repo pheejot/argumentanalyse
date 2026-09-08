@@ -448,7 +448,8 @@ def _jpg_font(size, bold=False, italic=False):
     elif bold: names = ['DejaVuSans-Bold.ttf']
     elif italic: names = ['DejaVuSans-Oblique.ttf']
     else: names = ['DejaVuSans.ttf']
-    for d in ('/usr/share/fonts/truetype/dejavu/', ''):
+    here = os.path.dirname(os.path.abspath(__file__))
+    for d in (os.path.join(here, 'fonts') + os.sep, '/usr/share/fonts/truetype/dejavu/', ''):
         for n in names:
             try: return ImageFont.truetype(d + n, size)
             except Exception: pass
