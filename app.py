@@ -16,6 +16,18 @@ except Exception:
 
 st.set_page_config(page_title='Diskussions-Analysator', page_icon=_ICON, layout='wide')
 
+# Zwei-Finger-Zoom auf dem Handy erlauben (Streamlit sperrt das sonst per Viewport-Meta).
+try:
+    import streamlit.components.v1 as _components
+    _components.html(
+        "<script>try{var d=window.parent.document;var m=d.querySelector('meta[name=viewport]');"
+        "if(!m){m=d.createElement('meta');m.setAttribute('name','viewport');d.head.appendChild(m);}"
+        "m.setAttribute('content','width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=5, user-scalable=yes');}catch(e){}</script>",
+        height=0,
+    )
+except Exception:
+    pass
+
 COLORS = {
     'Behauptung': '#ffe066',   # gelb
     'Begründung': '#8ce99a',   # grün
