@@ -172,16 +172,46 @@ def _strip_noise(text):
     return re.sub(r'\s+', ' ', t).strip()
 
 
+_TRANSCRIBE_LIMIT = 24_000_000   # Sicherheitsgrenze unter dem 25-MB-Limit der Transkription
+
+
+def _compress_audio(src_path):
+    """Rechnet eine zu große Aufnahme mit dem per pip mitgelieferten ffmpeg klein
+    (Mono, 16 kHz, 32 kbps MP3) – kein Systempaket nötig. Gibt den Pfad zur
+    komprimierten Datei zurück oder None, wenn es nicht klappt."""
+    try:
+        import imageio_ffmpeg
+        import subprocess
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        out = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3').name
+        subprocess.run([exe, '-y', '-i', src_path, '-ac', '1', '-ar', '16000', '-b:a', '32k', out],
+                       check=True, capture_output=True, timeout=180)
+        return out
+    except Exception:
+        return None
+
+
 def transcribe_audio(client: OpenAI, uploaded_file):
     """Transkribiert mit Segment-Zeitstempeln (whisper-1, verbose_json).
     Rückgabe: (text, segments) mit segments = [{'start','end','text'}, ...].
-    Störgeräusch-Vermerke (Lachen, Applaus …) werden herausgefiltert."""
+    Störgeräusch-Vermerke (Lachen, Applaus …) werden herausgefiltert. Zu große
+    Aufnahmen werden vorher automatisch komprimiert (25-MB-Grenze der API)."""
     suffix = Path(uploaded_file.name).suffix or '.wav'
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(uploaded_file.getbuffer())
         tmp_path = tmp.name
+    send_path = tmp_path
+    extra_path = None
     try:
-        with open(tmp_path, 'rb') as f:
+        if os.path.getsize(tmp_path) > _TRANSCRIBE_LIMIT:
+            extra_path = _compress_audio(tmp_path)
+            if extra_path:
+                send_path = extra_path
+            if os.path.getsize(send_path) > _TRANSCRIBE_LIMIT:
+                raise RuntimeError(
+                    'Die Aufnahme ist zu lang für die Transkription (Grenze ~25 MB). '
+                    'Bitte in kürzeren Abschnitten aufnehmen – jeder ausgewertete Abschnitt wird gesichert.')
+        with open(send_path, 'rb') as f:
             result = client.audio.transcriptions.create(
                 model='whisper-1',
                 file=f,
@@ -201,10 +231,12 @@ def transcribe_audio(client: OpenAI, uploaded_file):
                 segs.append({'start': st_, 'end': en_, 'text': tx_})
         return text, segs
     finally:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+        for _p in (tmp_path, extra_path):
+            if _p:
+                try:
+                    os.unlink(_p)
+                except OSError:
+                    pass
 
 
 def analyze_transcript(client: OpenAI, question: str, transcript: str):

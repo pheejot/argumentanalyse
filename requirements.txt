@@ -3,3 +3,4 @@ openai>=1.60
 pandas>=2.0
 requests
 Pillow
+imageio-ffmpeg
