@@ -118,6 +118,16 @@ Die Pfade stehen in `argumente.py`: `pfad` und `gegen` je Argument, dazu `KRITER
 
 ---
 
+## Emojis
+
+Jeder Schritt, jeder Knopf und jede Karte trägt ein Symbol — als Orientierungsanker für eine Lerngruppe, die ungern liest. Die vier Techniken haben feste Zeichen, die im ganzen Trainer gleich bleiben: 🔄 anders deuten, ✂️ einschränken, 🎯 entkräften, ⚖️ gewichten. Sie stehen als `emoji` bei den Techniken in `argumente.py`.
+
+**Die KI setzt keine Emojis** — Regel 18 in `trainer.py` verbietet es weiterhin. Alle Symbole kommen aus der App. Das hält sie einheitlich und verhindert, dass in einer Rückmeldung plötzlich ein Daumen hoch oder ein trauriges Gesicht auftaucht.
+
+**Bewusst ohne Symbol: die Rollen.** AfD, Mehr Demokratie e. V., CDU und Sozialverband stehen ohne Emoji da. Ein Symbol neben einem Parteinamen liest sich schnell als Bewertung, und im Politikunterricht ist das eine Grenze, die nicht gerissen werden sollte. Auch die Ampeln bleiben als farbige Punkte gezeichnet statt als 🟢🟡🔴 — das ist ruhiger und trägt die Beschriftung mit.
+
+---
+
 ## Was die App kostet
 
 Pro Aufruf gehen rund 10.100 Tokens konstante Vorlage hinein (Anweisung plus Wissensbasis), dazu etwa 200 Tokens Schülertext; heraus kommen 400 bis 1.000 Tokens. Bei 20 Schülern und höchstens 16 Rückmeldungen je Sitzung liegt das Ganze mit GPT-5.6 Luna zwischen etwa 0,10 und 0,75 Euro für die Klasse. Klassencode und Limits sind deshalb Missbrauchsschutz, keine Kostenbremse.

@@ -6,6 +6,7 @@ Bei Aenderungen am Vault muessen sie stabil bleiben.
 
 TECHNIKEN = {
     'anders deuten': {
+        'emoji': '🔄',
         'leitfrage': 'Kann man dieselbe Information auch anders verstehen?',
         'erklaerung': (
             'Du nimmst dieselbe Tatsache und zeigst, dass man sie auch anders '
@@ -18,6 +19,7 @@ TECHNIKEN = {
         ),
     },
     'einschraenken': {
+        'emoji': '✂️',
         'leitfrage': 'Wann stimmt das Argument – und wann nicht?',
         'erklaerung': (
             'Du gibst zu, dass das Argument stimmt – aber nur unter bestimmten '
@@ -26,6 +28,7 @@ TECHNIKEN = {
         'beispiel': 'Debatten können Wissen erhöhen, aber nicht bei allen gleich.',
     },
     'entkraeften': {
+        'emoji': '🎯',
         'leitfrage': 'Warum überzeugt das Argument nicht vollständig?',
         'erklaerung': (
             'Du zeigst eine echte Schwachstelle: Der Beleg passt nicht, die '
@@ -35,6 +38,7 @@ TECHNIKEN = {
         'beispiel': 'Transparenz zeigt viel Geld, beseitigt seinen Einfluss aber nicht.',
     },
     'gewichten': {
+        'emoji': '⚖️',
         'leitfrage': 'Welches Argument ist nach einem Kriterium wichtiger?',
         'erklaerung': (
             'Du erkennst das Argument an – und stellst ein anderes daneben, das '
